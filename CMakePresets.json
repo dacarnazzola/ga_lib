@@ -1,0 +1,43 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "debug",
+      "displayName": "gfortran DEBUG",
+      "description": "debug options for building with gfortran",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_Fortran_COMPILER": "gfortran",
+        "CMAKE_Fortran_FLAGS": "-O0 -g -Wall -Wextra -Werror -std=f2018 -pedantic -fmax-errors=1 -fcheck=all -fbacktrace -D__COMPILE_FOR_DEBUG__"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "gfortran RELEASE",
+      "description": "release options for building with gfortran",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_Fortran_COMPILER": "gfortran",
+        "CMAKE_Fortran_FLAGS": "-Ofast -march=native -flto -fwhole-program"
+      }
+    },
+    {
+      "name": "parallel",
+      "displayName": "gfortran PARALLEL",
+      "description": "optimized parallel options for building with gfortran",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_Fortran_COMPILER": "gfortran",
+        "CMAKE_Fortran_FLAGS": "-Ofast -march=native -flto -fwhole-program -fopenmp -g -fbacktrace"
+      }
+    }
+  ]
+}
