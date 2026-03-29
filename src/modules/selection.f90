@@ -12,7 +12,7 @@ contains
 
     impure subroutine selection_uniform_random(population, selected_pairs_ii)
         real(kind=sp), intent(in) :: population(:,:)
-        integer(kind=i32), intent(inout) :: selected_pairs_ii(2,size(population, dim=2, kind=i64))
+        integer(kind=i32), intent(out) :: selected_pairs_ii(2,size(population, dim=2, kind=i64))
         call debug_error_condition(size(population,dim=2,kind=i64) > huge(1_i32), &
                                    'SELECTION::SELECTION_UNIFORM_RANDOM population is too large for i32 storage')
         call random_uniform_i32(selected_pairs_ii, size(selected_pairs_ii, kind=i32), 1_i32, size(population, dim=2, kind=i32))
@@ -20,7 +20,7 @@ contains
 
     impure subroutine selection_tournament(population, fitness, selected_pairs_ii, k_opt)
         real(kind=sp), intent(in) :: population(:,:), fitness(size(population, dim=2, kind=i64))
-        integer(kind=i32), intent(inout) :: selected_pairs_ii(2,size(population, dim=2, kind=i64))
+        integer(kind=i32), intent(out) :: selected_pairs_ii(2,size(population, dim=2, kind=i64))
         integer(kind=i32), intent(in), optional :: k_opt
         integer(kind=i32) :: k, i, t1_start, t1_end, t2_start, t2_end
         integer(kind=i32), allocatable :: tournaments(:,:)

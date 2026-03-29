@@ -4,6 +4,7 @@ set(MODULE_FILES
     constants.f90
     system.f90
     random.f90
+    util.f90
     selection.f90
    )
 
