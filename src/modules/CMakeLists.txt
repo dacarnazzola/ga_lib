@@ -7,6 +7,7 @@ set(MODULE_FILES
     random.f90
     selection.f90
     crossover.f90
+    mutation.f90
    )
 
 # compile module source code files to lib_modules

@@ -4,10 +4,11 @@ use, non_intrinsic :: constants, only: twopi_dp
 use, non_intrinsic :: system, only: debug_error_condition
 implicit none
 private
-public :: random_uniform_i32, random_normal_sp, random_normal_dp, random_normal_multi
+public :: random_uniform_i32, random_uniform_dp, random_normal_sp, random_normal_dp, random_normal_multi
 
     interface random_normal_multi
         module procedure :: random_normal_multi_2d_sp
+        module procedure :: random_normal_multi_2d_dp
     end interface random_normal_multi
 
 contains
@@ -24,6 +25,18 @@ contains
         hi_lo = real(int(hi, kind=i64) - lo_i64 + 1_i64, kind=dp)
         x = int(int(work*hi_lo, kind=i64) + lo_i64, kind=i32)
     end subroutine random_uniform_i32
+
+    impure subroutine random_uniform_dp(x, n, lo, hi)
+        integer(kind=i32), intent(in) :: n
+        real(kind=dp), intent(out) :: x(n)
+        real(kind=dp), intent(in) :: lo, hi
+        real(kind=dp) :: hi_lo
+        call debug_error_condition(int(n, kind=i64) > huge(1_i32), &
+                                   'RANDOM::RANDOM_UNIFORM_I32 supplied n too large for i32 storage')
+        call random_number(x)
+        hi_lo = hi - lo
+        x = x*hi_lo + lo
+    end subroutine random_uniform_dp
 
     impure subroutine random_normal_sp(x, n, mu, sig)
         integer(kind=i32), intent(in) :: n
@@ -98,7 +111,7 @@ contains
                                    'RANDOM::RANDOM_NORMAL_MULTI_2D_SP Cholesky factor does not match x dimensions')
         call debug_error_condition(size(cholesky_factor, dim=1) /= size(cholesky_factor, dim=2), &
                                    'RANDOM::RANDOM_NORMAL_MULTI_2D_SP Cholesky factor must be square matrix')
-        call debug_error_condition(any([(cholesky_factor(i,i), i=1,size(cholesky_factor,dim=1))] < 0.0_sp), &
+        call debug_error_condition(any([(cholesky_factor(i,i), i=1,size(cholesky_factor, dim=1))] < 0.0_sp), &
                                    'RANDOM::RANDOM_NORMAL_MULTI_2D_SP Cholesky factor malformed with negative diagonal')
         allocate(z(size(x,dim=1),size(x,dim=2)), &
                  x_dp(size(x,dim=1),size(x,dim=2)), &
@@ -111,5 +124,31 @@ contains
         end do
         x = real(x_dp, kind=sp)
     end subroutine random_normal_multi_2d_sp
+
+    impure subroutine random_normal_multi_2d_dp(x, mu, cholesky_factor)
+        real(kind=dp), intent(out) :: x(:,:)
+        real(kind=dp), intent(in) :: mu(:), cholesky_factor(:,:)
+        real(kind=dp), allocatable :: z(:,:)
+        integer(kind=i32) :: i
+        call debug_error_condition((size(x, dim=1, kind=i64) > huge(1_i32)) .or. &
+                                   (size(x, dim=2, kind=i64) > huge(1_i32)) .or. &
+                                   (size(x, kind=i64) > huge(1_i32)), &
+                                   'RANDOM::RANDOM_NORMAL_MULTI_2D_SP supplied x too large for i32 storage')
+        call debug_error_condition(size(x, dim=1) /= size(mu), &
+                                   'RANDOM::RANDOM_NORMAL_MULTI_2D_SP mu does not match x dimensions')
+        call debug_error_condition((size(x, dim=1) /= size(cholesky_factor, dim=1)) .or. &
+                                   (size(x, dim=1) /= size(cholesky_factor, dim=2)), &
+                                   'RANDOM::RANDOM_NORMAL_MULTI_2D_SP Cholesky factor does not match x dimensions')
+        call debug_error_condition(size(cholesky_factor, dim=1) /= size(cholesky_factor, dim=2), &
+                                   'RANDOM::RANDOM_NORMAL_MULTI_2D_SP Cholesky factor must be square matrix')
+        call debug_error_condition(any([(cholesky_factor(i,i), i=1,size(cholesky_factor, dim=1))] < 0.0_dp), &
+                                   'RANDOM::RANDOM_NORMAL_MULTI_2D_SP Cholesky factor malformed with negative diagonal')
+        allocate(z(size(x,dim=1),size(x,dim=2)))
+        call random_normal_dp(z, size(z, kind=i32), 0.0_dp, 1.0_dp)
+        x = matmul(cholesky_factor, z)
+        do concurrent (i=1_i32:size(x, dim=2))
+            x(:,i) = x(:,i) + mu
+        end do
+    end subroutine random_normal_multi_2d_dp
 
 end module random

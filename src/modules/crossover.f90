@@ -4,11 +4,11 @@ use, non_intrinsic :: system, only: debug_error_condition
 use, non_intrinsic :: random, only: random_normal_dp
 implicit none
 private
-public :: crossover_fitness_weighted_blend_gaussian
+public :: crossover_fitness_weighted_gaussian_blend
 
 contains
 
-    impure subroutine crossover_fitness_weighted_blend_gaussian(population, selected_ii, fitness, new_population)
+    impure subroutine crossover_fitness_weighted_gaussian_blend(population, selected_ii, fitness, new_population)
         real(kind=sp), intent(in) :: population(:,:), fitness(:)
         integer(kind=i32), intent(in) :: selected_ii(:,:)
         real(kind=sp), intent(out) :: new_population(:,:)
@@ -22,18 +22,18 @@ contains
                                    (size(new_population, dim=1, kind=i64) > huge(1_i32)) .or. &
                                    (size(new_population, dim=2, kind=i64) > huge(1_i32)) .or. &
                                    (size(new_population, kind=i64) > huge(1_i32)), &
-                                   'CROSSOVER::CROSSOVER_FITNESS_WEIGHTED_BLEND_GAUSSIAN input arrays too large for i32 storage')
+                                   'CROSSOVER::crossover_fitness_weighted_gaussian_blend input arrays too large for i32 storage')
         call debug_error_condition(size(population, dim=2) /= size(fitness), &
-                                   'CROSSOVER::CROSSOVER_FITNESS_WEIGHTED_BLEND_GAUSSIAN population size must match fitness size')
+                                   'CROSSOVER::crossover_fitness_weighted_gaussian_blend population size must match fitness size')
         call debug_error_condition(size(selected_ii, dim=1) /= 2, &
-                                   'CROSSOVER::CROSSOVER_FITNESS_WEIGHTED_BLEND_GAUSSIAN crossover only implemented for 2 parents')
+                                   'CROSSOVER::crossover_fitness_weighted_gaussian_blend crossover only implemented for 2 parents')
         call debug_error_condition(size(selected_ii, dim=2) /= size(new_population, dim=2), &
-                                   'CROSSOVER::CROSSOVER_FITNESS_WEIGHTED_BLEND_GAUSSIAN crossover pairs mismatch new population')
+                                   'CROSSOVER::crossover_fitness_weighted_gaussian_blend crossover pairs mismatch new population')
         call debug_error_condition(size(population, dim=1) /= size(new_population, dim=1), &
-                                   'CROSSOVER::CROSSOVER_FITNESS_WEIGHTED_BLEND_GAUSSIAN new population genes mismatch original')
+                                   'CROSSOVER::crossover_fitness_weighted_gaussian_blend new population genes mismatch original')
         call debug_error_condition((minval(selected_ii) < 1) .or. &
                                    (maxval(selected_ii) > size(population, dim=2)), &
-                                   'CROSSOVER::CROSSOVER_FITNESS_WEIGHTED_BLEND_GAUSSIAN crossover pairs exceed population indices')
+                                   'CROSSOVER::crossover_fitness_weighted_gaussian_blend crossover pairs exceed population indices')
         allocate(genes_offspring_spread(size(new_population, dim=1),size(new_population, dim=2)))
         call random_normal_dp(genes_offspring_spread, size(genes_offspring_spread, kind=i32), 0.0_dp, 1.0_dp)
         do concurrent (i=1_i32:size(new_population, dim=2))
@@ -54,6 +54,6 @@ contains
                 new_population(:,i) = real(w1*genes1 + w2*genes2 + abs(genes2 - genes1)*genes_offspring_spread(:,i), kind=sp)
             end block
         end do
-    end subroutine crossover_fitness_weighted_blend_gaussian
+    end subroutine crossover_fitness_weighted_gaussian_blend
 
 end module crossover
