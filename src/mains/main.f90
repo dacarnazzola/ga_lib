@@ -38,7 +38,7 @@ contains
 end module ga_interface                                                           
 
 module benchmark
-use, non_intrinsic :: ga_interface, evaluate_function=>rosenbrock
+use, non_intrinsic :: ga_interface, evaluate_function=>rastrigin
 implicit none
 private
 public :: ik, solve
@@ -63,8 +63,12 @@ contains
                  selected_pairs_ii(2,population_size), candidate_sorted_ii(2*population_size))
 
         ! initialize population
-        domain_lb = -5.0_rk ! -5.12 for rastrigin
-        domain_ub = 10.0_rk ! 5.12 for rastrigin
+!! RASTRIGIN
+        domain_lb = -5.12_rk
+        domain_ub = 5.12_rk
+!!! ROSENBROCK
+!        domain_lb = -5.0_rk
+!        domain_ub = 10.0_rk
         call random_uniform(pop1, size(pop1), minval(domain_lb), maxval(domain_ub))
         current_population => pop1
         new_population => pop2
@@ -158,7 +162,7 @@ contains
 
         ! establish baseline
         allocate(baseline(problem_dimension,total_evals), baseline_fitness(total_evals))
-        call random_uniform(baseline, size(baseline), -5.12, 5.12)
+        call random_uniform(baseline, size(baseline), minval(domain_lb), maxval(domain_ub))
         call evaluate_function(baseline, baseline_fitness)
         elite_ii = minloc(baseline_fitness, dim=1)
         write(stdout,'(a,f0.6,a,i0,a)') 'baseline best fitness: ',baseline_fitness(elite_ii),' (',total_evals,' evaluations)'
@@ -171,8 +175,8 @@ use benchmark
 implicit none
 
     integer(ik), parameter :: problem_dimension   = 200
-    integer(ik), parameter :: population_size     = 2000
-    integer(ik), parameter :: maximum_generations = 2000
+    integer(ik), parameter :: population_size     = 4000
+    integer(ik), parameter :: maximum_generations = 4 * 250
 
     call solve(problem_dimension, population_size, maximum_generations)
 
