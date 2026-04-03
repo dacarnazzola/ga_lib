@@ -66,7 +66,7 @@ contains
         ft = fitness(1)
 
         ! set regularization vector very small, just to avoid numerical collapse
-        regularization_vector = (1.0e-5_rk)**2
+        regularization_vector = (1.0e-4_rk)**2
         ! set mutation rate as 1.0 - 4.0/population_size, enabling high mutation rate for populations 10+
         mutation_rate = 1.0_rk - 4.0_rk/real(population_size, kind=rk)
         ! start mutation scale at 1.0, it will vary depending on generational fitness
@@ -158,9 +158,9 @@ program main
 use benchmark
 implicit none
 
-    integer(ik), parameter :: problem_dimension = 20, &
-                              population_size = 1000, &
-                              maximum_generations = 100
+    integer(ik), parameter :: problem_dimension   = 20
+    integer(ik), parameter :: population_size     = 128*9
+    integer(ik), parameter :: maximum_generations = 24*3
 
     call solve_rastrigin(problem_dimension, population_size, maximum_generations)
 
