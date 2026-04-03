@@ -36,15 +36,20 @@ contains
 
     impure subroutine solve_rastrigin(problem_dimension, population_size, maximum_generations)
         integer(ik), intent(in) :: problem_dimension, population_size, maximum_generations
-        real(rk) :: fitness(population_size), cov(problem_dimension,problem_dimension), chol(problem_dimension,problem_dimension), &
-                    baseline(problem_dimension,population_size*(maximum_generations+1)), baseline_fitness(size(baseline,dim=2)), &
-                    domain_lb(problem_dimension), domain_ub(problem_dimension), mutation_rate, mutation_scale, &
-                    regularization_vector(problem_dimension), ft, ft_new, candidates(problem_dimension,2*population_size), &
-                    candidate_fitness(2*population_size)
-        real(rk), target :: pop1(problem_dimension,population_size), pop2(problem_dimension,population_size)
+        real(rk), allocatable :: fitness(:), cov(:,:), chol(:,:), baseline(:,:), baseline_fitness(:), domain_lb(:), domain_ub(:), &
+                                 regularization_vector(:), candidates(:,:), candidate_fitness(:)
+        real(rk), allocatable, target :: pop1(:,:), pop2(:,:)
         real(rk), pointer :: current_population(:,:), new_population(:,:), dummy_ptr(:,:)
-        integer(ik) :: selected_pairs_ii(2,population_size), generation, elite_ii, failed_gen, i, &
-                       candidate_sorted_ii(2*population_size)
+        real(rk) :: mutation_rate, mutation_scale, ft, ft_new
+        integer(ik), allocatable :: selected_pairs_ii(:,:), candidate_sorted_ii(:)
+        integer(ik) :: generation, elite_ii, failed_gen, i, total_evals
+
+        !allocate arrays
+        allocate(fitness(population_size), cov(problem_dimension,problem_dimension), chol(problem_dimension,problem_dimension), &
+                 domain_lb(problem_dimension), domain_ub(problem_dimension), regularization_vector(problem_dimension), &
+                 candidates(problem_dimension,2*population_size), candidate_fitness(2*population_size), &
+                 pop1(problem_dimension,population_size), pop2(problem_dimension,population_size), &
+                 selected_pairs_ii(2,population_size), candidate_sorted_ii(2*population_size))
 
         ! initialize population
         domain_lb = -5.12_rk
@@ -55,12 +60,13 @@ contains
 
         ! calculate fitness
         call rastrigin(current_population, fitness)
+        total_evals = size(fitness)
         elite_ii = minloc(fitness, dim=1)
         write(stdout,'(a,f0.6)') 'initial best fitness: ',fitness(elite_ii)
         ft = fitness(1)
 
-        ! set regularization vector as (domain/18)**2, this ensures minimum sigma on mutation Cholesky factor of domain/18
-        regularization_vector = ((domain_ub - domain_lb)/18.0_rk)**2
+        ! set regularization vector very small, just to avoid numerical collapse
+        regularization_vector = (1.0e-5_rk)**2
         ! set mutation rate as 1.0 - 4.0/population_size, enabling high mutation rate for populations 10+
         mutation_rate = 1.0_rk - 4.0_rk/real(population_size, kind=rk)
         ! start mutation scale at 1.0, it will vary depending on generational fitness
@@ -80,7 +86,7 @@ contains
             call apply_constraints(new_population, domain_lb, domain_ub)
 
             ! calculate covariance matrix and Cholesky factor for mutation
-            call covariance(cov, current_population(:,1:population_size/2), reg_vec_opt=regularization_vector)
+            call covariance(cov, current_population(:,1:population_size/4), reg_vec_opt=regularization_vector)
             call cholesky_decomposition(chol, cov)
 
             ! Gaussian mutation based on post-crossover population genetic covariance
@@ -89,6 +95,7 @@ contains
 
             ! calculate fitness
             call rastrigin(new_population, fitness)
+            total_evals = total_evals + size(fitness)
 
             ! store current_population and new_population into candidate_population(2*population_size), then keep top half
             candidates(:,1:population_size) = current_population
@@ -103,30 +110,31 @@ contains
             ft_new = fitness(1)
 
             if (ft_new < ft) then
-                mutation_scale = max(0.5_rk*mutation_scale, 0.1_rk)
+                mutation_scale = max(0.1_rk*mutation_scale, 1.0e-5_rk)
                 failed_gen = 0
             else
                 mutation_scale = 2.0_rk*mutation_scale
                 failed_gen = failed_gen + 1
             end if
 
-            if (failed_gen < 2) then
+            if (failed_gen < 10) then
                 ft = ft_new
             else ! elite 1 failing to improve, reset search space
                 chol = 0.0_rk
                 do concurrent (i=1:problem_dimension)
-                    chol(i,i) = abs(domain_ub(i) - domain_lb(i))/6.0_rk
+                    chol(i,i) = abs(domain_ub(i) - domain_lb(i))/2.0_rk
                 end do
                 do concurrent (i=population_size/2:population_size)
                     new_population(:,i) = new_population(:,1)
                 end do
                 call perform_mutation(new_population(:,population_size/2:population_size), 1.0_rk, chol, 1.0_rk)
-                call apply_constraints(new_population(:,2:population_size), domain_lb, domain_ub)
-                call rastrigin(new_population(:,2:population_size), fitness(2:population_size))
+                call apply_constraints(new_population(:,population_size/2:population_size), domain_lb, domain_ub)
+                call rastrigin(new_population(:,population_size/2:population_size), fitness(population_size/2:population_size))
+                total_evals = total_evals + (population_size - population_size/2)
                 elite_ii = minloc(fitness, dim=1)
                 write(stdout,'(a,i0,a,f0.6)') 'CATASTROPHE generation: ',generation,', best fitness: ',fitness(elite_ii)
                 ft = sum(fitness)
-                mutation_scale = 0.1_rk ! reset mutation_scale to 1.0 for randomized population
+                mutation_scale = 1.0_rk ! reset mutation_scale to 1.0 for randomized population
                 failed_gen = 0
             end if
 
@@ -137,11 +145,11 @@ contains
         end do
 
         ! establish baseline
+        allocate(baseline(problem_dimension,total_evals), baseline_fitness(total_evals))
         call random_uniform(baseline, size(baseline), -5.12, 5.12)
         call rastrigin(baseline, baseline_fitness)
         elite_ii = minloc(baseline_fitness, dim=1)
-        write(stdout,'(a,f0.6,a,i0,a)') 'baseline best fitness: ',baseline_fitness(elite_ii), &
-                                        ' (',size(baseline_fitness),' evaluations)'
+        write(stdout,'(a,f0.6,a,i0,a)') 'baseline best fitness: ',baseline_fitness(elite_ii),' (',total_evals,' evaluations)'
     end subroutine
 
 end module benchmark
@@ -151,7 +159,7 @@ use benchmark
 implicit none
 
     integer(ik), parameter :: problem_dimension = 20, &
-                              population_size = max(problem_dimension*10, 100), &
+                              population_size = 1000, &
                               maximum_generations = 100
 
     call solve_rastrigin(problem_dimension, population_size, maximum_generations)
