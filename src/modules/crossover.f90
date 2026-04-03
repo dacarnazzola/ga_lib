@@ -50,7 +50,7 @@ contains
                 good_sum = sum_fitness >= 1.0e-30_dp
                 w1 = merge(fitness2/sum_fitness, 0.5_dp, good_sum)
                 w2 = merge(fitness1/sum_fitness, 0.5_dp, good_sum)
-                genes_scale = 0.5_dp*min(abs(w1*genes1 + w2*genes2 - genes1), abs(w1*genes1 + w2*genes2 - genes2))
+                genes_scale = min(abs(w1*genes1 + w2*genes2 - genes1), abs(w1*genes1 + w2*genes2 - genes2))
 
                 new_population(:,i) = real(w1*genes1 + w2*genes2 + genes_scale*genes_offspring_spread(:,i), kind=sp)
             end block

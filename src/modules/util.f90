@@ -3,14 +3,19 @@ use, non_intrinsic :: kinds, only: i32, i64, sp, dp
 use, non_intrinsic :: system, only: debug_error_condition
 implicit none
 private
-public :: cov, chol, constraints_reflective_boundary
+public :: cov, chol, constraints_reflective_boundary, sort
+
+    interface sort
+        module procedure :: sort_sp
+        module procedure :: sort_with_indices_sp
+    end interface sort
 
 contains
 
     pure subroutine cov(c, x, x_avg_opt, reg_vec_opt)
-        real(kind=sp), intent(in), contiguous :: x(:,:)
+        real(kind=sp), intent(in) :: x(:,:)
         real(kind=sp), intent(out) :: c(size(x, dim=1, kind=i64),size(x, dim=1, kind=i64))
-        real(kind=sp), intent(in), contiguous, optional :: x_avg_opt(:), reg_vec_opt(:)
+        real(kind=sp), intent(in), optional :: x_avg_opt(:), reg_vec_opt(:)
         real(kind=dp) :: x_avg(size(x, dim=1, kind=i64)), x_centered(size(x, dim=1, kind=i64),size(x, dim=2, kind=i64)), &
                          c_dp(size(x, dim=1, kind=i64),size(x, dim=1, kind=i64)), inv_n, inv_n_1
         integer(kind=i32) :: nx, i
@@ -45,7 +50,7 @@ contains
     end subroutine cov
 
     pure subroutine chol(l, a)
-        real(kind=sp), intent(in), contiguous :: a(:,:)
+        real(kind=sp), intent(in) :: a(:,:)
         real(kind=sp), intent(out) :: l(size(a, dim=1, kind=i64),size(a, dim=2, kind=i64))
         real(kind=dp) :: a_dp(size(a, dim=1, kind=i64),size(a, dim=2, kind=i64)), &
                          l_dp(size(a, dim=1, kind=i64),size(a, dim=2, kind=i64)), current_diagonal, sqrt_diag
@@ -75,8 +80,8 @@ contains
     end subroutine chol
 
     pure subroutine constraints_reflective_boundary(x, lo, hi)
-        real(kind=sp), intent(inout), contiguous :: x(:,:)
-        real(kind=sp), intent(in), contiguous :: lo(:), hi(:)
+        real(kind=sp), intent(inout) :: x(:,:)
+        real(kind=sp), intent(in) :: lo(:), hi(:)
         real(kind=dp) :: width(size(x,dim=1)), lo_dp(size(lo)), hi_dp(size(hi))
         integer :: i
         hi_dp = real(hi, kind=dp)
@@ -92,5 +97,54 @@ contains
             end block
         end do
     end subroutine constraints_reflective_boundary
+
+    subroutine sort_sp(arr)
+        real(kind=sp), intent(inout) :: arr(:)
+        integer(kind=i32) :: n, i, j, gap
+        real(kind=sp) :: temp_val
+        n = size(arr, kind=i32)
+        gap = n/2_i32
+        do while (gap > 0_i32)
+            do i=gap+1_i32,n
+                temp_val = arr(i)
+                j = i
+                do while (j > gap)
+                    if (arr(j - gap) <= temp_val) exit
+                    arr(j) = arr(j - gap)
+                    j = j - gap
+                end do
+                arr(j) = temp_val
+            end do
+            gap = gap/2_i32
+        end do
+    end subroutine sort_sp
+
+    subroutine sort_with_indices_sp(arr, idx)
+        real(kind=sp), intent(inout) :: arr(:)
+        integer(kind=i32), intent(out) :: idx(:)
+        integer(kind=i32) :: n, i, j, gap, temp_idx
+        real(kind=sp) :: temp_val
+        n = size(arr, kind=i32)
+        do i=1_i32,n
+            idx(i) = i
+        end do
+        gap = n/2_i32
+        do while (gap > 0_i32)
+            do i=gap+1_i32,n
+                temp_val = arr(i)
+                temp_idx = idx(i)
+                j = i
+                do while (j > gap)
+                    if (arr(j - gap) <= temp_val) exit
+                    arr(j) = arr(j - gap)
+                    idx(j) = idx(j - gap)
+                    j = j - gap
+                end do
+                arr(j) = temp_val
+                idx(j) = temp_idx
+            end do
+            gap = gap/2_i32
+        end do
+    end subroutine sort_with_indices_sp
 
 end module util
