@@ -1,18 +1,19 @@
 module crossover
 use, non_intrinsic :: kinds, only: i32, i64, sp, dp, bool
 use, non_intrinsic :: system, only: debug_error_condition
-use, non_intrinsic :: random, only: random_normal_dp
+use, non_intrinsic :: random, only: random_normal_multi
 implicit none
 private
 public :: crossover_fitness_weighted_gaussian_blend
 
 contains
 
-    impure subroutine crossover_fitness_weighted_gaussian_blend(population, selected_pairs_ii, fitness, new_population)
-        real(kind=sp), intent(in) :: population(:,:), fitness(:)
+    impure subroutine crossover_fitness_weighted_gaussian_blend(population, selected_pairs_ii, fitness, &
+                                                                cholesky_factor, new_population)
+        real(kind=sp), intent(in) :: population(:,:), fitness(:), cholesky_factor(:,:)
         integer(kind=i32), intent(in) :: selected_pairs_ii(:,:)
         real(kind=sp), intent(out) :: new_population(:,:)
-        real(kind=dp), allocatable :: genes_offspring_spread(:,:)
+        real(kind=dp), allocatable :: genes_offspring_spread(:,:), zeros(:), cholesky_factor_dp(:,:)
         integer(kind=i32) :: i
         call debug_error_condition((size(population, dim=1, kind=i64) > huge(1_i32)) .or. &
                                    (size(population, dim=2, kind=i64) > huge(1_i32)) .or. &
@@ -34,8 +35,11 @@ contains
         call debug_error_condition((minval(selected_pairs_ii) < 1) .or. &
                                    (maxval(selected_pairs_ii) > size(population, dim=2)), &
                                    'CROSSOVER::crossover_fitness_weighted_gaussian_blend crossover pairs exceed population indices')
-        allocate(genes_offspring_spread(size(new_population, dim=1),size(new_population, dim=2)))
-        call random_normal_dp(genes_offspring_spread, size(genes_offspring_spread, kind=i32), 0.0_dp, 1.0_dp)
+        allocate(genes_offspring_spread(size(new_population, dim=1),size(new_population, dim=2)), &
+                 zeros(size(new_population, dim=1)), cholesky_factor_dp(size(new_population, dim=1),size(new_population, dim=1)))
+        zeros = 0.0_dp
+        cholesky_factor_dp = real(cholesky_factor, kind=dp)
+        call random_normal_multi(genes_offspring_spread, zeros, cholesky_factor_dp)
         do concurrent (i=1_i32:size(new_population, dim=2))
             block
                 real(kind=dp) :: genes1(size(population, dim=1)), genes2(size(population, dim=1)), &

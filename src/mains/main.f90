@@ -51,9 +51,9 @@ contains
                                  regularization_vector(:), candidates(:,:), candidate_fitness(:), new_cov(:,:)
         real(rk), allocatable, target :: pop1(:,:), pop2(:,:)
         real(rk), pointer :: current_population(:,:), new_population(:,:), dummy_ptr(:,:)
-        real(rk) :: mutation_rate, mutation_scale, ft, ft_new, cov_learning_rate, offspring_success
+        real(rk) :: mutation_rate, mutation_scale, ft, ft_new, cov_learning_rate, offspring_success, chol_fac
         integer(ik), allocatable :: selected_pairs_ii(:,:), candidate_sorted_ii(:)
-        integer(ik) :: generation, elite_ii, i, total_evals, tournament_k, catastrophe_pop_start
+        integer(ik) :: generation, elite_ii, i, total_evals, tournament_k, catastrophe_pop_start, catastrophe_count
         logical :: population_ok
 
         !allocate arrays
@@ -83,7 +83,6 @@ contains
         elite_ii = 1
         write(stdout,'(a,f0.6)') 'initial best fitness: ',fitness(elite_ii)
         ft = fitness(elite_ii)
-        population_ok = .true.
 
         ! set regularization vector very small, just to avoid numerical collapse
         regularization_vector = (1.0e-10_rk)**2
@@ -99,7 +98,19 @@ contains
         catastrophe_pop_start = population_size/2_ik
 
         ! perform GA loop
+        population_ok = .false.
+        catastrophe_count = 0_ik
         do generation=1,maximum_generations
+
+            ! calculate covariance matrix and Cholesky factor for use later
+            call covariance(new_cov, current_population(:,1:population_size/4), reg_vec_opt=regularization_vector)
+            if (population_ok) then
+                cov = (1.0_rk - cov_learning_rate)*cov + cov_learning_rate*new_cov
+            else
+                cov = new_cov
+            end if
+            call cholesky_decomposition(chol, cov)
+            
             ! tournament selection
             call perform_selection(current_population, fitness, selected_pairs_ii, k_opt=tournament_k)
 
@@ -107,17 +118,13 @@ contains
             candidate_fitness(1:population_size) = fitness
 
             ! fitness-weighted crossover with Gaussian blend
-            call perform_crossover(current_population, selected_pairs_ii, fitness, new_population)
+            chol_fac = 0.0_rk
+            do i=1_ik,problem_dimension
+                chol_fac = chol_fac + cov(i,i)
+            end do
+            chol_fac = sqrt(real(problem_dimension, kind=rk)/chol_fac)
+            call perform_crossover(current_population, selected_pairs_ii, fitness, chol_fac*chol, new_population)
             call apply_constraints(new_population, domain_lb, domain_ub)
-
-            ! calculate covariance matrix and Cholesky factor for mutation
-            call covariance(new_cov, current_population(:,1:population_size/2), reg_vec_opt=regularization_vector)
-            if (generation > 1) then
-                cov = (1.0_rk - cov_learning_rate)*cov + cov_learning_rate*new_cov
-            else
-                cov = new_cov
-            end if
-            call cholesky_decomposition(chol, cov)
 
             ! Gaussian mutation based on post-crossover population genetic covariance
             call perform_mutation(new_population, mutation_rate, chol, mutation_scale)
@@ -139,7 +146,7 @@ contains
             offspring_success = real(count(candidate_sorted_ii(1:population_size) > population_size), kind=rk) / &
                                 real(population_size, kind=rk)
             if (offspring_success >= 0.5_rk) then
-                cov_learning_rate = min(1.5_rk*cov_learning_rate, 0.1_rk)
+                cov_learning_rate = min(1.5_rk*cov_learning_rate, 0.2_rk) ! was 0.1
             else
                 cov_learning_rate = max(0.5_rk*cov_learning_rate, 0.01_rk)
             end if
@@ -152,19 +159,26 @@ contains
                                              ', offspring success: ',offspring_success
 
             if (ft_new < ft) then
-                mutation_scale = max(0.1_rk*mutation_scale, 1.0e-10_rk)
+                mutation_scale = max(0.5_rk*mutation_scale, 0.1_rk) ! was 1.0e-10_rk
             else
-                mutation_scale = min(2.0_rk*mutation_scale, 3.0_rk)
+                mutation_scale = min(2.0_rk*mutation_scale, 1000.0_rk)
             end if
             ft = ft_new
 
-            if (abs(fitness(1) - fitness(population_size))/fitness(1) < 0.01_rk) population_ok = .false.
+            if (abs(fitness(1) - fitness(population_size/2_ik))/fitness(1) > 0.01_rk) then
+                population_ok = .true.
+            else
+                population_ok = .false.
+            end if
 
             if (.not.population_ok) then
+                write(*,*) 'entering CATASTROPHE block'
+                write(*,*) '  mutation_scale: ',mutation_scale
+                write(*,*) '  cov_learning_rate: ',cov_learning_rate
                 do concurrent (i=catastrophe_pop_start:population_size)
                     new_population(:,i) = new_population(:,1)
                 end do
-                mutation_scale = min(mutation_scale*10.0_rk, 1.0_rk) ! reset mutation_scale to 1.0 for randomized population
+                mutation_scale = min(mutation_scale*2.0_rk, 1.0_rk)
                 call perform_mutation(new_population(:,catastrophe_pop_start:population_size), 1.0_rk, chol, mutation_scale)
                 call apply_constraints(new_population(:,catastrophe_pop_start:population_size), domain_lb, domain_ub)
                 call evaluate_function(new_population(:,catastrophe_pop_start:population_size), &
@@ -174,9 +188,15 @@ contains
                 current_population = new_population(:,candidate_sorted_ii(1:population_size))
                 elite_ii = 1
                 ft = fitness(elite_ii)
-                write(stdout,'(a,i0,a,f0.6)') 'CATASTROPHE generation: ',generation,', best fitness: ',ft
+                write(stdout,'(a,i0,2(a,f0.6))') 'CATASTROPHE generation: ',generation, &
+                                              ', best fitness: ',ft, &
+                                              ', mutation rate: ',mutation_rate
+                do i=1,problem_dimension
+                    write(*,*) chol(i,i)
+                end do
                 cov_learning_rate = 0.05_rk ! reset cov_learning_rate to 0.5 for randomized population
-                population_ok = .true.
+                catastrophe_count = catastrophe_count + 1_ik
+                if (catastrophe_count > 10_ik) error stop 'death doom loop'
             end if
 
             if (ft < 1.0e-6) exit
@@ -202,8 +222,8 @@ use benchmark
 implicit none
 
     integer(ik), parameter :: problem_dimension   = 20
-    integer(ik), parameter :: population_size     = 1000
-    integer(ik), parameter :: maximum_generations = 1000000/population_size
+    integer(ik), parameter :: population_size     = problem_dimension*100
+    integer(ik), parameter :: maximum_generations = nint(10000000.0/population_size)
 
     call solve(problem_dimension, population_size, maximum_generations)
 
