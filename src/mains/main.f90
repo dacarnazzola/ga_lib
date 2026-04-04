@@ -51,8 +51,8 @@ contains
                                  regularization_vector(:), candidates(:,:), candidate_fitness(:), new_cov(:,:)
         real(rk), allocatable, target :: pop1(:,:), pop2(:,:)
         real(rk), pointer :: current_population(:,:), new_population(:,:), dummy_ptr(:,:)
-        real(rk) :: mutation_rate, mutation_scale, ft, ft_new, cov_learning_rate, offspring_success, chol_fac
-        integer(ik), allocatable :: selected_pairs_ii(:,:), candidate_sorted_ii(:)
+        real(rk) :: mutation_rate, mutation_scale, ft, ft_new, cov_learning_rate, offspring_success, chol_fac, avg_fitness
+        integer(ik), allocatable :: selected_pairs_ii(:,:), candidate_sorted_ii(:), improved_average_fitness_ii(:)
         integer(ik) :: generation, elite_ii, i, total_evals, tournament_k, catastrophe_pop_start, catastrophe_count
         logical :: population_ok
 
@@ -62,15 +62,16 @@ contains
                  candidates(problem_dimension,2*population_size), candidate_fitness(2*population_size), &
                  pop1(problem_dimension,population_size), pop2(problem_dimension,population_size), &
                  selected_pairs_ii(2,population_size), candidate_sorted_ii(2*population_size), &
-                 new_cov(problem_dimension,problem_dimension))
-
-        ! initialize population
+                 new_cov(problem_dimension,problem_dimension), improved_average_fitness_ii(population_size))
 !! RASTRIGIN
         domain_lb = -5.12_rk
         domain_ub = 5.12_rk
 !!! ROSENBROCK
 !        domain_lb = -5.0_rk
 !        domain_ub = 10.0_rk
+
+        ! initialize population
+        improved_average_fitness_ii = [(i, i=1_ik,population_size)]
         call random_uniform(pop1, size(pop1), minval(domain_lb), maxval(domain_ub))
         current_population => pop1
         new_population => pop2
@@ -78,11 +79,13 @@ contains
         ! calculate fitness
         call evaluate_function(current_population, fitness)
         total_evals = size(fitness)
+        avg_fitness = sum(fitness)/real(population_size, kind=rk)
         call sort_candidates(fitness, candidate_sorted_ii(1:population_size))
         current_population = current_population(:,candidate_sorted_ii(1:population_size))
         elite_ii = 1
         write(stdout,'(a,f0.6)') 'initial best fitness: ',fitness(elite_ii)
         ft = fitness(elite_ii)
+
 
         ! set regularization vector very small, just to avoid numerical collapse
         regularization_vector = (1.0e-10_rk)**2
@@ -103,7 +106,7 @@ contains
         do generation=1,maximum_generations
 
             ! calculate covariance matrix and Cholesky factor for use later
-            call covariance(new_cov, current_population(:,1:population_size/4), reg_vec_opt=regularization_vector)
+            call covariance(new_cov, current_population(:,improved_average_fitness_ii), reg_vec_opt=regularization_vector)
             if (population_ok) then
                 cov = (1.0_rk - cov_learning_rate)*cov + cov_learning_rate*new_cov
             else
@@ -145,6 +148,9 @@ contains
             ! calculate offspring success = crossover + mutation offspring in population / population size
             offspring_success = real(count(candidate_sorted_ii(1:population_size) > population_size), kind=rk) / &
                                 real(population_size, kind=rk)
+            if (allocated(improved_average_fitness_ii)) deallocate(improved_average_fitness_ii)
+            improved_average_fitness_ii = pack([(i, i=1_ik,population_size)], fitness < avg_fitness)
+            avg_fitness = sum(fitness)/real(population_size, kind=rk)
             if (offspring_success >= 0.5_rk) then
                 cov_learning_rate = min(1.5_rk*cov_learning_rate, 0.2_rk) ! was 0.1
             else
@@ -165,7 +171,7 @@ contains
             end if
             ft = ft_new
 
-            if (abs(fitness(1) - fitness(population_size/2_ik))/fitness(1) > 0.01_rk) then
+            if (abs(fitness(1) - fitness(population_size))/fitness(1) > 0.01_rk) then
                 population_ok = .true.
             else
                 population_ok = .false.
@@ -196,9 +202,10 @@ contains
                 end do
                 cov_learning_rate = 0.05_rk ! reset cov_learning_rate to 0.5 for randomized population
                 catastrophe_count = catastrophe_count + 1_ik
-                if (catastrophe_count > 10_ik) error stop 'death doom loop'
+                if (catastrophe_count > 0_ik) error stop 'death doom loop'
             end if
 
+            ! exit if converged
             if (ft < 1.0e-6) exit
 
             ! swap population pointers
@@ -221,9 +228,9 @@ program main
 use benchmark
 implicit none
 
-    integer(ik), parameter :: problem_dimension   = 20
+    integer(ik), parameter :: problem_dimension   = 10
     integer(ik), parameter :: population_size     = problem_dimension*100
-    integer(ik), parameter :: maximum_generations = nint(10000000.0/population_size)
+    integer(ik), parameter :: maximum_generations = 10
 
     call solve(problem_dimension, population_size, maximum_generations)
 
