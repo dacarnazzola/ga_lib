@@ -43,7 +43,7 @@ contains
         do concurrent (i=1_i32:size(new_population, dim=2))
             block
                 real(kind=dp) :: genes1(size(population, dim=1)), genes2(size(population, dim=1)), &
-                                 fitness1, fitness2, sum_fitness, w1, w2, genes_scale(size(population, dim=1))
+                                 fitness1, fitness2, sum_fitness, w1, w2, genes_scale
                 logical(kind=bool) :: good_sum
 
                 genes1 = real(population(:,selected_pairs_ii(1,i)), kind=dp)
@@ -54,7 +54,8 @@ contains
                 good_sum = sum_fitness >= 1.0e-30_dp
                 w1 = merge(fitness2/sum_fitness, 0.5_dp, good_sum)
                 w2 = merge(fitness1/sum_fitness, 0.5_dp, good_sum)
-                genes_scale = min(abs(w1*genes1 + w2*genes2 - genes1), abs(w1*genes1 + w2*genes2 - genes2))
+                genes_scale = min(norm2(w1*genes1 + w2*genes2 - genes1), &
+                                  norm2(w1*genes1 + w2*genes2 - genes2))/real(size(population, dim=1), kind=dp)
 
                 new_population(:,i) = real(w1*genes1 + w2*genes2 + genes_scale*genes_offspring_spread(:,i), kind=sp)
             end block

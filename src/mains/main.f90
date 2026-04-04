@@ -43,7 +43,21 @@ implicit none
 private
 public :: ik, solve
 
+    logical, parameter :: print_matrix_enabled = .false.
+
 contains
+
+    impure subroutine print_matrix(mat)
+        real(kind=rk), intent(in) :: mat(:,:)
+        character(len=32) :: write_format
+        integer :: i
+        if (print_matrix_enabled) then
+            write(write_format, '(a,i0,a)') '(',size(mat,2),'e13.6)'
+            do i=1,size(mat,1)
+                write(unit=*, fmt=write_format) mat(i,:)
+            end do
+        end if
+    end subroutine print_matrix
 
     impure subroutine solve(problem_dimension, population_size, maximum_generations)
         integer(ik), intent(in) :: problem_dimension, population_size, maximum_generations
@@ -51,8 +65,9 @@ contains
                                  regularization_vector(:), candidates(:,:), candidate_fitness(:), new_cov(:,:)
         real(rk), allocatable, target :: pop1(:,:), pop2(:,:)
         real(rk), pointer :: current_population(:,:), new_population(:,:), dummy_ptr(:,:)
-        real(rk) :: mutation_rate, mutation_scale, ft, ft_new, cov_learning_rate, offspring_success, chol_fac, avg_fitness
-        integer(ik), allocatable :: selected_pairs_ii(:,:), candidate_sorted_ii(:), improved_average_fitness_ii(:)
+        real(rk) :: mutation_rate, mutation_scale, cov_learning_rate, offspring_success, chol_fac, &
+                    current_fitness_stats(4), new_fitness_stats(4) ! best, median, worst, average
+        integer(ik), allocatable :: selected_pairs_ii(:,:), candidate_sorted_ii(:), improved_median_fitness_ii(:)
         integer(ik) :: generation, elite_ii, i, total_evals, tournament_k, catastrophe_pop_start, catastrophe_count
         logical :: population_ok
 
@@ -62,7 +77,7 @@ contains
                  candidates(problem_dimension,2*population_size), candidate_fitness(2*population_size), &
                  pop1(problem_dimension,population_size), pop2(problem_dimension,population_size), &
                  selected_pairs_ii(2,population_size), candidate_sorted_ii(2*population_size), &
-                 new_cov(problem_dimension,problem_dimension), improved_average_fitness_ii(population_size))
+                 new_cov(problem_dimension,problem_dimension), improved_median_fitness_ii(population_size))
 !! RASTRIGIN
         domain_lb = -5.12_rk
         domain_ub = 5.12_rk
@@ -71,7 +86,7 @@ contains
 !        domain_ub = 10.0_rk
 
         ! initialize population
-        improved_average_fitness_ii = [(i, i=1_ik,population_size)]
+        improved_median_fitness_ii = [(i, i=1_ik,population_size)]
         call random_uniform(pop1, size(pop1), minval(domain_lb), maxval(domain_ub))
         current_population => pop1
         new_population => pop2
@@ -79,18 +94,19 @@ contains
         ! calculate fitness
         call evaluate_function(current_population, fitness)
         total_evals = size(fitness)
-        avg_fitness = sum(fitness)/real(population_size, kind=rk)
         call sort_candidates(fitness, candidate_sorted_ii(1:population_size))
         current_population = current_population(:,candidate_sorted_ii(1:population_size))
-        elite_ii = 1
-        write(stdout,'(a,f0.6)') 'initial best fitness: ',fitness(elite_ii)
-        ft = fitness(elite_ii)
+        current_fitness_stats = [fitness(1), &
+                                 fitness(population_size/2_ik), &
+                                 fitness(population_size), &
+                                 sum(fitness)/real(population_size, kind=rk)]
+        write(stdout,'(a,f0.6)') 'initial best fitness: ',current_fitness_stats(1)
 
 
         ! set regularization vector very small, just to avoid numerical collapse
         regularization_vector = (1.0e-10_rk)**2
         ! set mutation rate as 1.0 - 4.0/population_size, enabling high mutation rate for populations 10+
-        mutation_rate = 1.0_rk - 4.0_rk/real(population_size, kind=rk)
+        mutation_rate = 0.5_rk ! 1.0_rk - 4.0_rk/real(population_size, kind=rk)
         ! start mutation scale at 1.0, it will vary depending on generational fitness
         mutation_scale = 1.0_rk
         ! start cov_learning_rate at 0.5, it will vary depending on generational fitness
@@ -106,13 +122,15 @@ contains
         do generation=1,maximum_generations
 
             ! calculate covariance matrix and Cholesky factor for use later
-            call covariance(new_cov, current_population(:,improved_average_fitness_ii), reg_vec_opt=regularization_vector)
+            call covariance(new_cov, current_population(:,improved_median_fitness_ii), reg_vec_opt=regularization_vector)
             if (population_ok) then
                 cov = (1.0_rk - cov_learning_rate)*cov + cov_learning_rate*new_cov
             else
                 cov = new_cov
             end if
             call cholesky_decomposition(chol, cov)
+
+            call print_matrix(chol)
             
             ! tournament selection
             call perform_selection(current_population, fitness, selected_pairs_ii, k_opt=tournament_k)
@@ -145,31 +163,37 @@ contains
             fitness = candidate_fitness(1:population_size)
             new_population = candidates(:,candidate_sorted_ii(1:population_size))
 
+            new_fitness_stats = [fitness(1), &
+                                 fitness(population_size/2_ik), &
+                                 fitness(population_size), &
+                                 sum(fitness)/real(population_size, kind=rk)]
+
             ! calculate offspring success = crossover + mutation offspring in population / population size
             offspring_success = real(count(candidate_sorted_ii(1:population_size) > population_size), kind=rk) / &
                                 real(population_size, kind=rk)
-            if (allocated(improved_average_fitness_ii)) deallocate(improved_average_fitness_ii)
-            improved_average_fitness_ii = pack([(i, i=1_ik,population_size)], fitness < avg_fitness)
-            avg_fitness = sum(fitness)/real(population_size, kind=rk)
-            if (offspring_success >= 0.5_rk) then
-                cov_learning_rate = min(1.5_rk*cov_learning_rate, 0.2_rk) ! was 0.1
+            ! improed_median_fitness_ii tells which individuals contributed to improving 
+            if (allocated(improved_median_fitness_ii)) deallocate(improved_median_fitness_ii)
+            improved_median_fitness_ii = pack([(i, i=1_ik,population_size)], fitness < current_fitness_stats(2))
+
+            ! ~18.4% is optimal for some valley function, ~20% standard to balance convergence speed while not overshooting
+            if (offspring_success >= 0.2_rk) then
+                cov_learning_rate = min(1.5_rk*cov_learning_rate, 0.5_rk)
             else
                 cov_learning_rate = max(0.5_rk*cov_learning_rate, 0.01_rk)
             end if
 
-            elite_ii = 1
-            ft_new = fitness(elite_ii)
-            write(stdout,'(a,i0,3(a,f0.6))') 'generation: ',generation, &
-                                             ', best fitness: ',ft_new, &
-                                             ', worst fitness: ',fitness(population_size), &
-                                             ', offspring success: ',offspring_success
-
-            if (ft_new < ft) then
-                mutation_scale = max(0.5_rk*mutation_scale, 0.1_rk) ! was 1.0e-10_rk
+            ! spread from median fitness to best fitness captures top half of distribution, if it is collapsing, we need more noise
+            if (abs(new_fitness_stats(1) - new_fitness_stats(2)) > abs(current_fitness_stats(1) - current_fitness_stats(2))) then
+                mutation_scale = max(0.5_rk*mutation_scale, 1.0e-10_rk)
             else
-                mutation_scale = min(2.0_rk*mutation_scale, 1000.0_rk)
+                mutation_scale = min(1.5_rk*mutation_scale, 2.0_rk)
             end if
-            ft = ft_new
+
+            write(stdout,'(a,i0,4(a,f0.6))') 'generation: ',generation, &
+                                             ', best fitness: ',new_fitness_stats(1), &
+                                             ', offspring success: ',offspring_success, &
+                                             ', cov learning rate: ',cov_learning_rate, &
+                                             ', mutation scale: ',mutation_scale
 
             if (abs(fitness(1) - fitness(population_size))/fitness(1) > 0.01_rk) then
                 population_ok = .true.
@@ -192,10 +216,12 @@ contains
                 total_evals = total_evals + (population_size - catastrophe_pop_start + 1)
                 call sort_candidates(fitness, candidate_sorted_ii(1:population_size))
                 current_population = new_population(:,candidate_sorted_ii(1:population_size))
-                elite_ii = 1
-                ft = fitness(elite_ii)
+                new_fitness_stats = [fitness(1), &
+                                     fitness(population_size/2_ik), &
+                                     fitness(population_size), &
+                                     sum(fitness)/real(population_size, kind=rk)]
                 write(stdout,'(a,i0,2(a,f0.6))') 'CATASTROPHE generation: ',generation, &
-                                              ', best fitness: ',ft, &
+                                              ', best fitness: ',new_fitness_stats(1), &
                                               ', mutation rate: ',mutation_rate
                 do i=1,problem_dimension
                     write(*,*) chol(i,i)
@@ -206,7 +232,11 @@ contains
             end if
 
             ! exit if converged
-            if (ft < 1.0e-6) exit
+            if (new_fitness_stats(1) < 1.0e-6) then
+                exit
+            else
+                current_fitness_stats = new_fitness_stats
+            end if
 
             ! swap population pointers
             dummy_ptr => current_population
@@ -228,9 +258,9 @@ program main
 use benchmark
 implicit none
 
-    integer(ik), parameter :: problem_dimension   = 10
+    integer(ik), parameter :: problem_dimension   = 2
     integer(ik), parameter :: population_size     = problem_dimension*100
-    integer(ik), parameter :: maximum_generations = 10
+    integer(ik), parameter :: maximum_generations = nint(1000000.0/population_size)
 
     call solve(problem_dimension, population_size, maximum_generations)
 
