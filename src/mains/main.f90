@@ -70,9 +70,10 @@ module benchmark
 use, non_intrinsic :: ga_interface
 implicit none
 private
-public :: ik, rk, solve, real_valued_function, rastrigin, rosenbrock, griewank, styblinski_tang
+public :: stdout, ik, rk, solve, real_valued_function, rastrigin, rosenbrock, griewank, styblinski_tang
 
-    logical, parameter :: print_matrix_enabled = .false.
+    logical, parameter :: print_matrix_enabled = .false., printing = .true.
+    integer(ik), parameter :: catastrophe_limit = huge(1_ik)
 
 contains
 
@@ -89,7 +90,7 @@ contains
     impure subroutine solve(evaluate_function, target_value, domain_lb, domain_ub)
         procedure(real_valued_function) :: evaluate_function
         real(rk), intent(in) :: target_value, domain_lb(:), domain_ub(:)
-        real(rk), allocatable :: fitness(:), cov(:,:), chol(:,:), baseline(:,:), baseline_fitness(:), &
+        real(rk), allocatable :: fitness(:), cov(:,:), chol(:,:),  &
                                  regularization_vector(:), candidates(:,:), candidate_fitness(:), new_cov(:,:), cov_weights(:)
         real(rk), allocatable, target :: pop1(:,:), pop2(:,:)
         real(rk), pointer :: current_population(:,:), new_population(:,:), dummy_ptr(:,:)
@@ -98,12 +99,12 @@ contains
                     mutation_scale0, mutation_scale_min, mutation_scale_max, &
                     cov_learning_rate0, cov_learning_rate_min, cov_learning_rate_max
         integer(ik), allocatable :: selected_pairs_ii(:,:), candidate_sorted_ii(:)
-        integer(ik) :: generation, elite_ii, i, total_evals, tournament_k, catastrophe_pop_start, catastrophe_count, &
+        integer(ik) :: generation, i, total_evals, tournament_k, catastrophe_pop_start, catastrophe_count, &
                        problem_dimension, population_size, maximum_generations
         logical :: population_ok
 
         problem_dimension = size(domain_lb)
-        population_size = 10_ik*problem_dimension
+        population_size = 10_ik + 10_ik*problem_dimension
         maximum_generations = int(1000000.0_rk/real(population_size, kind=rk), kind=ik)
 
         !allocate arrays
@@ -129,8 +130,9 @@ contains
                                  fitness(population_size/2_ik), &
                                  fitness(population_size), &
                                  sum(fitness)/real(population_size, kind=rk)]
-        write(stdout,'(a,f0.6)') 'initial best fitness: ',current_fitness_stats(1)
-
+        if (printing) then
+            write(stdout,'(a,f0.6)') 'initial best fitness: ',current_fitness_stats(1)
+        end if
 
         ! set regularization vector very small, just to avoid numerical collapse
         regularization_vector = (1.0e-10_rk)**2
@@ -235,11 +237,13 @@ contains
                 mutation_scale = min(1.5_rk*mutation_scale, mutation_scale_max)
             end if
 
-            write(stdout,'(a,i0,4(a,f0.6))') 'generation: ',generation, &
-                                             ', best fitness: ',new_fitness_stats(1), &
-                                             ', offspring success: ',offspring_success, &
-                                             ', cov learning rate: ',cov_learning_rate, &
-                                             ', mutation scale: ',mutation_scale
+            if (printing) then
+                write(stdout,'(a,i0,4(a,f0.6))') '  generation: ',generation, &
+                                                 ', best fitness: ',new_fitness_stats(1), &
+                                                 ', offspring success: ',offspring_success, &
+                                                 ', cov learning rate: ',cov_learning_rate, &
+                                                 ', mutation scale: ',mutation_scale
+            end if
 
             if ((mutation_scale >= 0.7) .and. (new_fitness_stats(1) >= current_fitness_stats(1))) then
                 population_ok = .false.
@@ -249,9 +253,11 @@ contains
             end if
 
             if (.not.population_ok) then
-                write(*,'(a)') '  CATASTROPHE - doubling covariance'
-                write(*,'(a,4e13.6)') '    previous population fitness min/med/max/avg: ',current_fitness_stats
-                write(*,'(a,4e13.6)') '         new population fitness min/med/max/avg: ',new_fitness_stats
+                if (printing) then
+                    write(stdout,'(a)') '    CATASTROPHE - doubling covariance'
+                    write(stdout,'(a,4e13.6)') '      previous population fitness min/med/max/avg: ',current_fitness_stats
+                    write(stdout,'(a,4e13.6)') '           new population fitness min/med/max/avg: ',new_fitness_stats
+                end if
 
                 cov = 2.0_rk*cov ! double covariance to help crossover search
                 mutation_scale = mutation_scale0 ! reset mutation_scale to 0.5
@@ -263,14 +269,13 @@ contains
                 call perform_mutation(new_population(:,2:population_size), 1.0_rk, chol, mutation_scale) ! copy + mutate elite 1
 
                 catastrophe_count = catastrophe_count + 1_ik
-!                if (catastrophe_count > 10_ik) error stop 'death doom loop'
+                if (catastrophe_count > catastrophe_limit) error stop 'death doom loop'
             end if
 
             ! exit if converged
-            if (new_fitness_stats(1) < 1.0e-6) then
+            current_fitness_stats = new_fitness_stats
+            if (current_fitness_stats(1) < 1.0e-6) then
                 exit
-            else
-                current_fitness_stats = new_fitness_stats
             end if
 
             ! swap population pointers
@@ -278,14 +283,7 @@ contains
             current_population => new_population
             new_population => dummy_ptr
         end do
-
-        ! establish baseline
-        allocate(baseline(problem_dimension,total_evals), baseline_fitness(total_evals))
-        call random_uniform(baseline, size(baseline), minval(domain_lb), maxval(domain_ub))
-        call evaluate_function(baseline, baseline_fitness)
-        fitness = abs(target_value - fitness)
-        elite_ii = minloc(baseline_fitness, dim=1)
-        write(stdout,'(a,f0.6,a,i0,a)') 'baseline best fitness: ',baseline_fitness(elite_ii),' (',total_evals,' evaluations)'
+        write(stdout,*) '  value: ',current_fitness_stats(1),', evaluations: ',total_evals
     end subroutine solve
 
 end module benchmark
@@ -335,15 +333,16 @@ implicit none
                     domain_lb = -5.0_rk
                     domain_ub = 5.0_rk
                 case default
-                    write(*,*) 'valid test functions are:'
-                    write(*,*) ' 1. Rastrigin'
-                    write(*,*) ' 2. Rosenbrock'
-                    write(*,*) ' 3. Griewank'
-                    write(*,*) ' 4. Styblinski-Tang'
+                    write(stdout,'(a)') 'valid test functions are:'
+                    write(stdout,'(a)') ' 1. Rastrigin'
+                    write(stdout,'(a)') ' 2. Rosenbrock'
+                    write(stdout,'(a)') ' 3. Griewank'
+                    write(stdout,'(a)') ' 4. Styblinski-Tang'
                     error stop 'only 4 test functions have been implemented'
             end select
-            write(*,'(a,f0.6,a,i0,a,f0.2,a,f0.2,a)') &
+            write(stdout,'(a,f0.6,a,i0,a,f0.2,a,f0.2,a)') &
                  fname//' looking for ',target_value,' on ',d,' dimensions [',minval(domain_lb),', ',maxval(domain_ub),']'
+            call solve(test_function, target_value, domain_lb, domain_ub)
         end do
     end do
 
