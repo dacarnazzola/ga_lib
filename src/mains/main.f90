@@ -99,7 +99,7 @@ contains
         real(rk), pointer :: current_population(:,:), new_population(:,:), dummy_ptr(:,:)
         real(rk) :: mutation_rate, mutation_scale, cov_learning_rate, offspring_success_rate, chol_fac, &
                     current_fitness_stats(4), new_fitness_stats(4), & ! best, median, worst, average
-                    mutation_scale0, mutation_scale_min, mutation_scale_max, &
+                    mutation_scale0, mutation_scale_min, mutation_scale_max, delta_fitness, &
                     cov_learning_rate0, cov_learning_rate_min, cov_learning_rate_max, t_use
         integer(ik), allocatable :: selected_pairs_ii(:,:), candidate_sorted_ii(:)
         integer(ik) :: generation, i, total_evals, tournament_k, catastrophe_pop_start, catastrophe_count, &
@@ -147,7 +147,7 @@ contains
         regularization_vector = epsilon(1.0_rk)
 
         ! set mutation rate as 1.0 - 4.0/population_size, enabling high mutation rate for populations 10+
-        mutation_rate = 0.8_rk ! 1.0_rk - 4.0_rk/real(population_size, kind=rk)
+        mutation_rate = 0.5_rk ! 1.0_rk - 4.0_rk/real(population_size, kind=rk)
 
         ! start mutation scale at 1.0, it will vary depending on generational fitness
         mutation_scale0 = (1.0_rk/6.0_rk)/sqrt(real(problem_dimension, kind=rk))
@@ -192,21 +192,21 @@ contains
             candidate_fitness(1:population_size) = fitness
             ! standard deviation of current generation fitness will be used as gating temperature
             call stdev(fitness, t_use)
-            t_use = max(t_use, epsilon(1.0_rk))
+            t_use = max(t_use, epsilon(1.0_rk))*(1.0 - real(generation)/real(maximum_generations))**2
 
             ! fitness-weighted crossover with Gaussian blend
             chol_fac = 0.0_rk
             do i=1_ik,problem_dimension
                 chol_fac = chol_fac + cov(i,i)
             end do
-            chol_fac = sqrt(real(problem_dimension, kind=rk)/chol_fac)
+            chol_fac = sqrt(real(problem_dimension, kind=rk)/chol_fac) ! Cholesky decomposition scaled by sqrt(N/tr(Cov)) to "normalize"
             call perform_crossover(current_population, selected_pairs_ii, fitness, chol_fac*chol, new_population)
             call apply_constraints(new_population, domain_lb, domain_ub)
 
             ! Gaussian mutation based on post-crossover population genetic covariance
             chol = 0.0_rk
             do concurrent (i=1_ik:problem_dimension)
-                chol(i,i) = domain_ub(i) - domain_lb(i)
+                chol(i,i) = domain_ub(i) - domain_lb(i) ! override chol array with isotropic noise = domain, scaled by mutation_scale
             end do
             call perform_mutation(new_population, mutation_rate, chol, mutation_scale)
             call apply_constraints(new_population, domain_lb, domain_ub)
@@ -226,11 +226,12 @@ contains
             call random_uniform(draw_vs_t, size(draw_vs_t, kind=ik), 0.0_rk, 1.0_rk)
             offspring_success = 0_ik
             do concurrent (i=1_ik:population_size)
-                if (fitness(i) < current_fitness_stats(1)) then
+                delta_fitness = current_fitness_stats(1) - fitness(i) ! previous population's best fitness vs new population's fitness(i)
+                if (delta_fitness > 0.0_rk) then ! fitness(i) < current_fitness_stats(1) --> this individual is closer to 0.0 than previous gen's best
                     new_population(:,i) = candidate_population(:,population_size+i)
                     offspring_success = offspring_success + 1_ik
                 else
-                    if (draw_vs_t(i) < exp((current_fitness_stats(1) - fitness(i))/t_use)) then
+                    if (draw_vs_t(i) < exp(delta_fitness/t_use)) then
                         new_population(:,i) = candidate_population(:,population_size+i)
                         offspring_success = offspring_success + 1_ik
                     else
@@ -330,9 +331,9 @@ program main
 use benchmark
 implicit none
 
-    integer(ik), parameter :: k_test_functions = 4
+    integer(ik), parameter :: k_test_functions = 2
     integer(ik), parameter :: d_dimension_list(*) = [20_ik] ! [2_ik, 10_ik, 20_ik, 100_ik, 200_ik]
-    integer(ik), parameter :: eval_budget = 1000000_ik
+    integer(ik), parameter :: eval_budget = 100000_ik
 
     procedure(real_valued_function), pointer :: test_function
     character(len=:), allocatable :: fname
